@@ -31,7 +31,6 @@ pub fn topsis(criteria_weights: &[f64], is_benefits: &[bool], raw_matrix: &[f64]
   let distance: RawDistance = matrix
     .column_iter_mut()
     .zip(criteria_weights)
-    // .zip(is_benefits)
     .map(|(mut col, weight)| {
       let norm = col.norm();
       for v in col.iter_mut() {
