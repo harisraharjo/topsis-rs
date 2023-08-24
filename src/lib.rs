@@ -1,28 +1,7 @@
 use nalgebra::{DMatrix, SimdComplexField};
 
-#[derive(Clone, PartialEq, Debug, Default)]
-struct RawDistance {
-  pub(crate) positive: Vec<f64>,
-  pub(crate) negative: Vec<f64>,
-}
-
-impl FromIterator<Vec<(f64, f64)>> for RawDistance {
-  fn from_iter<T: IntoIterator<Item = Vec<(f64, f64)>>>(iter: T) -> Self {
-    let mut distance = RawDistance::default();
-
-    for vec in iter {
-      for value in vec {
-        distance.positive.push(value.0);
-        distance.negative.push(value.1);
-      }
-    }
-
-    distance.positive.shrink_to_fit();
-    distance
-  }
-}
-
-pub fn topsis(criteria_weights: &[f64], is_benefits: &[bool], raw_matrix: &[f64]) -> Vec<f64> {
+///
+pub fn topsis(criteria_weights: &[f64], is_benefits: &[bool], raw_matrix: &[f64]) -> Rank {
   let ncols = criteria_weights.len();
   let nrows = raw_matrix.len() / ncols;
 
@@ -64,16 +43,83 @@ pub fn topsis(criteria_weights: &[f64], is_benefits: &[bool], raw_matrix: &[f64]
   let negative_distance = DMatrix::<f64>::from_column_slice(nrows, ncols, &distance.negative);
   drop(distance);
 
-  let mut rc: Vec<f64> = positive_distance
+  let rc: Rank = positive_distance
     .row_iter()
     .zip(negative_distance.row_iter())
     .map(|(p_row, n_row)| (p_row.sum().simd_sqrt(), n_row.sum().simd_sqrt()))
+    // .enumerate()
     .map(|(pdv, ndv)| ndv / (pdv + ndv))
     .collect();
 
-  rc.sort_by(|a, b| b.partial_cmp(a).unwrap());
-
   rc
+}
+
+#[derive(Debug, Default)]
+pub struct Alternative {
+  value: f64,
+  id: usize,
+}
+
+impl Alternative {
+  fn new(value: f64, id: usize) -> Alternative {
+    Alternative { value, id }
+  }
+}
+
+#[derive(Debug, Default)]
+pub struct Rank {
+  alternatives: Vec<Alternative>,
+}
+
+impl IntoIterator for Rank {
+  type Item = Alternative;
+
+  type IntoIter = std::vec::IntoIter<Self::Item>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    self.alternatives.into_iter()
+  }
+}
+
+impl FromIterator<f64> for Rank {
+  fn from_iter<T: IntoIterator<Item = f64>>(rcs_values: T) -> Self {
+    let mut rank = Rank {
+      alternatives: rcs_values
+        .into_iter()
+        .enumerate()
+        .map(|(id, value)| Alternative::new(value, id))
+        .collect(),
+    };
+
+    rank
+      .alternatives
+      .sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap());
+
+    rank
+  }
+}
+
+#[derive(Clone, PartialEq, Debug, Default)]
+struct RawDistance {
+  positive: Vec<f64>,
+  negative: Vec<f64>,
+}
+
+impl FromIterator<Vec<(f64, f64)>> for RawDistance {
+  fn from_iter<T: IntoIterator<Item = Vec<(f64, f64)>>>(iter: T) -> Self {
+    let mut distance = RawDistance::default();
+
+    for vec in iter {
+      for value in vec {
+        distance.positive.push(value.0);
+        distance.negative.push(value.1);
+      }
+    }
+
+    distance.positive.shrink_to_fit();
+    distance.negative.shrink_to_fit();
+    distance
+  }
 }
 
 #[cfg(test)]
@@ -82,22 +128,17 @@ mod tests {
 
   #[test]
   fn it_rank_alternatives_correctly() {
-    let result = topsis(
+    let result: Vec<usize> = topsis(
       &[0.64339f64, 0.28284f64, 0.07377f64],
       &[true, true, true],
       &[
         80f64, 70f64, 91f64, 90f64, 80f64, 71f64, 90f64, 78f64, 0f64, 1f64, 0f64, 4f64,
       ],
-    );
+    )
+    .into_iter()
+    .map(|e| e.id)
+    .collect();
 
-    assert_eq!(
-      result,
-      &[
-        0.8311594494103931,
-        0.5511369430527522,
-        0.32943698268828747,
-        0.148034942264447,
-      ]
-    );
+    assert_eq!(result, &[3usize, 2usize, 0usize, 1usize]);
   }
 }
