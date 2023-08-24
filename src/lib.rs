@@ -1,11 +1,35 @@
+#![doc = include_str!("../README.md")]
+
 use nalgebra::{DMatrix, SimdComplexField};
 
+/// Execute TOPSIS calculation with given parameters.
 ///
-pub fn topsis(criteria_weights: &[f64], is_benefits: &[bool], raw_matrix: &[f64]) -> Rank {
+/// `criteria_weights` is a vector that contains the weight of each criterion.\
+/// `criteria_types` is a vector that contains the type of each criterion.\
+/// `alternatives` is a flat matrix constructed in column major order that contains the data.\
+/// `Vec<Alternative>` is a vector that contains the ranking of the alternatives along with its data in descending order.
+pub fn calculate(
+  criteria_weights: &[f64],
+  criteria_types: &[bool],
+  alternatives: &[f64],
+) -> Vec<Alternative> {
   let ncols = criteria_weights.len();
-  let nrows = raw_matrix.len() / ncols;
+  let data_length = alternatives.len();
 
-  let mut matrix = DMatrix::<f64>::from_column_slice(nrows, ncols, raw_matrix);
+  assert_eq!(
+    ncols,
+    criteria_types.len(),
+    "The length of the criteria_weights and the criteria_types must be the same"
+  );
+  assert_eq!(
+    0,
+    data_length % ncols,
+    "The number of columns in alternatives must be equal to the length of the criteria_types"
+  );
+
+  let nrows = data_length / ncols;
+
+  let mut matrix = DMatrix::<f64>::from_column_slice(nrows, ncols, alternatives);
 
   let distance: RawDistance = matrix
     .column_iter_mut()
@@ -18,7 +42,7 @@ pub fn topsis(criteria_weights: &[f64], is_benefits: &[bool], raw_matrix: &[f64]
 
       col
     })
-    .zip(is_benefits)
+    .zip(criteria_types)
     .map(|(col, is_benefit)| {
       let (max, min) = (col.max(), col.min());
 
@@ -27,13 +51,10 @@ pub fn topsis(criteria_weights: &[f64], is_benefits: &[bool], raw_matrix: &[f64]
       pis *= -1.0;
       nis *= -1.0;
 
-      // TODO: create a separate type for `Vec<(f64, f64)>` and implement Extend to it;
-      let result: Vec<(f64, f64)> = col
+      col
         .iter()
         .map(|e| ((e + pis).powf(2.0), (e + nis).powf(2.0)))
-        .collect();
-
-      result
+        .collect()
     })
     .collect();
 
@@ -43,21 +64,26 @@ pub fn topsis(criteria_weights: &[f64], is_benefits: &[bool], raw_matrix: &[f64]
   let negative_distance = DMatrix::<f64>::from_column_slice(nrows, ncols, &distance.negative);
   drop(distance);
 
-  let rc: Rank = positive_distance
+  let mut result: Vec<Alternative> = positive_distance
     .row_iter()
     .zip(negative_distance.row_iter())
     .map(|(p_row, n_row)| (p_row.sum().simd_sqrt(), n_row.sum().simd_sqrt()))
-    // .enumerate()
-    .map(|(pdv, ndv)| ndv / (pdv + ndv))
+    .enumerate()
+    .map(|(id, (pdv, ndv))| Alternative::new(ndv / (pdv + ndv), id))
     .collect();
 
-  rc
+  result.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap());
+  result
 }
 
-#[derive(Debug, Default)]
+#[derive(Default, Debug)]
+/// A structure to represent the result data
+///
+/// `value` is the result value.\
+/// `id` is the id of the data.
 pub struct Alternative {
-  value: f64,
-  id: usize,
+  pub value: f64,
+  pub id: usize,
 }
 
 impl Alternative {
@@ -66,40 +92,7 @@ impl Alternative {
   }
 }
 
-#[derive(Debug, Default)]
-pub struct Rank {
-  alternatives: Vec<Alternative>,
-}
-
-impl IntoIterator for Rank {
-  type Item = Alternative;
-
-  type IntoIter = std::vec::IntoIter<Self::Item>;
-
-  fn into_iter(self) -> Self::IntoIter {
-    self.alternatives.into_iter()
-  }
-}
-
-impl FromIterator<f64> for Rank {
-  fn from_iter<T: IntoIterator<Item = f64>>(rcs_values: T) -> Self {
-    let mut rank = Rank {
-      alternatives: rcs_values
-        .into_iter()
-        .enumerate()
-        .map(|(id, value)| Alternative::new(value, id))
-        .collect(),
-    };
-
-    rank
-      .alternatives
-      .sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap());
-
-    rank
-  }
-}
-
-#[derive(Clone, PartialEq, Debug, Default)]
+#[derive(Default)]
 struct RawDistance {
   positive: Vec<f64>,
   negative: Vec<f64>,
@@ -122,23 +115,24 @@ impl FromIterator<Vec<(f64, f64)>> for RawDistance {
   }
 }
 
-#[cfg(test)]
-mod tests {
-  use super::*;
+mod test {
+  #[cfg(test)]
+  mod tests {
+    use crate::calculate;
 
-  #[test]
-  fn it_rank_alternatives_correctly() {
-    let result: Vec<usize> = topsis(
-      &[0.64339f64, 0.28284f64, 0.07377f64],
-      &[true, true, true],
-      &[
-        80f64, 70f64, 91f64, 90f64, 80f64, 71f64, 90f64, 78f64, 0f64, 1f64, 0f64, 4f64,
-      ],
-    )
-    .into_iter()
-    .map(|e| e.id)
-    .collect();
+    #[test]
+    fn it_ranks_correctly() {
+      let result = calculate(
+        &[0.64339, 0.28284, 0.07377],
+        &[true, true, true],
+        &[
+          80.0, 70.0, 91.0, 90.0, 80.0, 71.0, 90.0, 78.0, 0.0, 1.0, 0.0, 4.0,
+        ],
+      );
 
-    assert_eq!(result, &[3usize, 2usize, 0usize, 1usize]);
+      let rs: Vec<usize> = result.into_iter().map(|e| e.id).collect();
+
+      assert_eq!(rs, &[3, 2, 0, 1]);
+    }
   }
 }
