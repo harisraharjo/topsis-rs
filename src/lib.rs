@@ -2,11 +2,7 @@
 
 use nalgebra::{DMatrix, DVector, SimdComplexField};
 use std::marker::PhantomData;
-// use js_sys
 
-// use wasm_bindgen::prelude::*;
-
-// #[wasm_bindgen]
 /// Execute TOPSIS calculation with given parameters.
 ///
 /// `criteria_weights` is a vector that contains the weight of each criterion.\
@@ -33,7 +29,6 @@ pub fn calculate(
   );
 
   let nrows = data_length / ncols;
-
   let distance: RawDistance = alternatives
     .chunks_exact(nrows)
     .zip(criteria_weights)
@@ -48,18 +43,21 @@ pub fn calculate(
     })
     .zip(criteria_types)
     .map(|(col, is_benefit)| {
-      // let ad = IdealSolution::new(col);
-
       let (max, min) = (col.max(), col.min());
-      //TODO: try to remove branches
-      let (mut pis, mut nis) = if *is_benefit { (max, min) } else { (min, max) };
-      pis *= -1.0;
-      nis *= -1.0;
 
-      col
-        .iter()
-        .map(|e| ((e + pis).powf(2.0), (e + nis).powf(2.0)))
-        .collect()
+      let (mut pisi, mut nisi) = if *is_benefit { (max, min) } else { (min, max) };
+      pisi *= -1.0;
+      nisi *= -1.0;
+
+      let cap = col.len();
+      let (mut pis, mut nis) = (Vec::with_capacity(cap), Vec::with_capacity(cap));
+
+      for value in col.iter() {
+        pis.push((value + pisi).powf(2.0));
+        nis.push((value + nisi).powf(2.0));
+      }
+
+      (pis, nis)
     })
     .collect();
 
@@ -78,21 +76,6 @@ pub fn calculate(
   result.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap());
   result
 }
-
-// #[derive(Default, Debug)]
-// struct IdealSolution {
-//   positive: f64,
-//   negative: f64,
-// }
-
-// impl IdealSolution {
-//   fn new(col: DVector<f64>) -> IdealSolution {
-//     IdealSolution {
-//       positive: todo!(),
-//       negative: todo!(),
-//     }
-//   }
-// }
 
 #[derive(Default, Debug)]
 /// A structure to represent the result data
@@ -121,19 +104,16 @@ struct RawDistance {
   negative: Vec<f64>,
 }
 
-impl FromIterator<Vec<(f64, f64)>> for RawDistance {
-  fn from_iter<T: IntoIterator<Item = Vec<(f64, f64)>>>(iter: T) -> Self {
+impl FromIterator<(Vec<f64>, Vec<f64>)> for RawDistance {
+  fn from_iter<T: IntoIterator<Item = (Vec<f64>, Vec<f64>)>>(iter: T) -> Self {
+    // TODO: turn it to row major order
     let mut distance = RawDistance::default();
 
-    for vec in iter {
-      for value in vec {
-        distance.positive.push(value.0);
-        distance.negative.push(value.1);
-      }
+    for mut vec in iter {
+      distance.positive.append(&mut vec.0);
+      distance.negative.append(&mut vec.1);
     }
 
-    distance.positive.shrink_to_fit();
-    distance.negative.shrink_to_fit();
     distance
   }
 }
