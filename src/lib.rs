@@ -1,7 +1,12 @@
 #![doc = include_str!("../README.md")]
 
-use nalgebra::{DMatrix, SimdComplexField};
+use nalgebra::{DMatrix, DVector, SimdComplexField};
+use std::marker::PhantomData;
+// use js_sys
 
+// use wasm_bindgen::prelude::*;
+
+// #[wasm_bindgen]
 /// Execute TOPSIS calculation with given parameters.
 ///
 /// `criteria_weights` is a vector that contains the weight of each criterion.\
@@ -29,12 +34,11 @@ pub fn calculate(
 
   let nrows = data_length / ncols;
 
-  let mut matrix = DMatrix::<f64>::from_column_slice(nrows, ncols, alternatives);
-
-  let distance: RawDistance = matrix
-    .column_iter_mut()
+  let distance: RawDistance = alternatives
+    .chunks_exact(nrows)
     .zip(criteria_weights)
-    .map(|(mut col, weight)| {
+    .map(|(col, weight)| {
+      let mut col = DVector::<f64>::from_column_slice(col);
       let norm = col.norm();
       for v in col.iter_mut() {
         *v = v.simd_unscale(norm).simd_scale(*weight);
@@ -44,8 +48,9 @@ pub fn calculate(
     })
     .zip(criteria_types)
     .map(|(col, is_benefit)| {
-      let (max, min) = (col.max(), col.min());
+      // let ad = IdealSolution::new(col);
 
+      let (max, min) = (col.max(), col.min());
       //TODO: try to remove branches
       let (mut pis, mut nis) = if *is_benefit { (max, min) } else { (min, max) };
       pis *= -1.0;
@@ -57,8 +62,6 @@ pub fn calculate(
         .collect()
     })
     .collect();
-
-  drop(matrix);
 
   let positive_distance = DMatrix::<f64>::from_column_slice(nrows, ncols, &distance.positive);
   let negative_distance = DMatrix::<f64>::from_column_slice(nrows, ncols, &distance.negative);
@@ -76,6 +79,21 @@ pub fn calculate(
   result
 }
 
+// #[derive(Default, Debug)]
+// struct IdealSolution {
+//   positive: f64,
+//   negative: f64,
+// }
+
+// impl IdealSolution {
+//   fn new(col: DVector<f64>) -> IdealSolution {
+//     IdealSolution {
+//       positive: todo!(),
+//       negative: todo!(),
+//     }
+//   }
+// }
+
 #[derive(Default, Debug)]
 /// A structure to represent the result data
 ///
@@ -84,11 +102,16 @@ pub fn calculate(
 pub struct Alternative {
   pub value: f64,
   pub id: usize,
+  _marker: PhantomData<f64>,
 }
 
 impl Alternative {
   fn new(value: f64, id: usize) -> Alternative {
-    Alternative { value, id }
+    Alternative {
+      value,
+      id,
+      _marker: PhantomData,
+    }
   }
 }
 
